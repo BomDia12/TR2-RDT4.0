@@ -1,6 +1,7 @@
 import argparse
 import RDT
 import time
+import asyncio
 
 
 def upperCase(message):
@@ -31,7 +32,7 @@ if __name__ == '__main__':
             # convert and reply
             rep_msg_S = upperCase(msg_S)
             print('Serer: converted %s \nto %s\n' % (msg_S, rep_msg_S))
-            rdt.rdt_3_0_send(rep_msg_S)
+            asyncio.run(rdt.rdt_4_0_send(rep_msg_S))
     except (KeyboardInterrupt, SystemExit):
         print("Ending connection...")
     except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):

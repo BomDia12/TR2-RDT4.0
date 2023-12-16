@@ -1,6 +1,7 @@
 import argparse
 import RDT
 import time
+import asyncio
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Quotation client talking to a Pig Latin server.')
@@ -21,7 +22,7 @@ if __name__ == '__main__':
     try:
         for msg_S in msg_L:
             print('Client asking to change case: ' + msg_S)
-            rdt.rdt_3_0_send(msg_S)
+            asyncio.run(rdt.rdt_4_0_send(msg_S))
 
             # try to receive message before timeout
             msg_S = None
