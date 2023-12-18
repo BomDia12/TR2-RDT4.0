@@ -6,7 +6,7 @@ import hashlib
 import math
 
 # Constants
-debug = True
+debug = False
 packet_len = 10
 window_size = 4
 # default = False
@@ -23,6 +23,7 @@ class Packet:
     length_S_length = 10
     # length of md5 checksum in hex
     checksum_length = 32
+    
 
     def __init__(self, seq_num, msg_S, last=False):
         self.seq_num = seq_num
@@ -85,10 +86,20 @@ class RDT:
     timeout = 0.1
     return_value = ''
     pkt_buf = []
-    
+    msg_total = 0
+    bytes_total = 0
+    pkts_total = 0
+    re_pkts_total = 0
+    re_pkts_msg = 0
+    re_pkts_ack = 0
+    corr_pkts_total = 0
+    corr_pkts_msg = 0
+    corr_pkts_ack = 0
+    corr_pkts_rec = 0
 
     def __init__(self, role_S, server_S, port):
         self.network = Network.NetworkLayer(role_S, server_S, port)
+        self.time = time.time()
 
     def rdt_4_0_send(self, msg: str):
         pkts = self._break_message(msg)
@@ -101,6 +112,9 @@ class RDT:
                     self.network.udt_send(window[j][0].get_byte_S())
                     window[j] = (window[j][0], t)
                     debug_log("Sent pkt {} {}".format(window[j][0].seq_num, window[j][0].get_byte_S()))
+                    self.pkts_total += 1
+                    self.msg_total += len(window[j][0].msg_S)
+                    self.bytes_total += len(window[j][0].get_byte_S())
 
             while len(self.byte_buffer) < (1 + Packet.length_S_length):
                 self.byte_buffer += self.network.udt_receive()
@@ -109,7 +123,11 @@ class RDT:
                         t = time.time()
                         self.network.udt_send(window[j][0].get_byte_S())
                         window[j] = (window[j][0], t)
-            
+                        self.pkts_total += 1
+                        self.re_pkts_total += 1
+                        self.re_pkts_msg += 1
+                        self.bytes_total += len(window[j][0].get_byte_S())
+
             #debug_log("SENDER: " + response)
 
             try:
@@ -117,6 +135,8 @@ class RDT:
                 
                 if Packet.corrupt(self.byte_buffer[:msg_length]):
                     self.byte_buffer = self.byte_buffer[msg_length:]
+                    self.corr_pkts_total += 1
+                    self.corr_pkts_rec += 1
                     continue
                 else:
                     res_p = Packet.from_byte_S(self.byte_buffer[:msg_length])
@@ -127,6 +147,12 @@ class RDT:
                         # recieved NACK
                         if res_p.msg_S == "0":
                             t = time.time()
+                            self.corr_pkts_total += 1
+                            self.corr_pkts_msg += 1
+                            self.pkts_total += 1
+                            self.re_pkts_total += 1
+                            self.re_pkts_msg += 1
+                            self.bytes_total += len(window[j][0].get_byte_S())
                             self.network.udt_send(window[ind][0].get_byte_S())
                             window[j] = (window[ind][0], t)
                         # recieved ACK
@@ -143,10 +169,16 @@ class RDT:
                         if self.seq_num > res_p.seq_num:
                             debug_log("SENDER: Receiver behind sender")
                             answer = Packet(res_p.seq_num, "1")
+                            self.pkts_total += 1
+                            self.bytes_total += len(answer.get_byte_S())
+                            self.re_pkts_total += 1
+                            self.re_pkts_ack += 1
                             self.network.udt_send(answer.get_byte_S())
                             debug_log("ACK sent: {}".format(answer.get_byte_S()))
             except:
                 self.byte_buffer = ''
+                self.corr_pkts_total += 1
+                self.corr_pkts_rec += 1
                 continue
         debug_log(f"SENDER: done, beg seq_num: {self.seq_num}, end seq_num: {self.seq_num + len(pkts)}")
         self.seq_num += len(pkts)
@@ -166,7 +198,11 @@ class RDT:
             except:
                 self.byte_buffer = ''
                 debug_log("RECEIVER: Corrupt packet, sending NAK.")
+                self.pkts_total += 1
+                self.corr_pkts_total += 1
+                self.corr_pkts_rec += 1
                 answer = Packet(self.seq_num, "0")
+                self.bytes_total += len(len(answer.get_byte_S()))
                 self.network.udt_send(answer.get_byte_S())
                 continue
             if len(self.byte_buffer) < length:
@@ -180,6 +216,10 @@ class RDT:
                 self.byte_buffer = self.byte_buffer[length:]
                 debug_log("RECEIVER: Corrupt packet, sending NAK.")
                 answer = Packet(self.seq_num, "0")
+                self.pkts_total += 1
+                self.corr_pkts_total += 1
+                self.corr_pkts_rec += 1
+                self.bytes_total += len(len(answer.get_byte_S()))
                 self.network.udt_send(answer.get_byte_S())
             else:
                 # create packet from buffer content
@@ -193,6 +233,8 @@ class RDT:
                     debug_log('RECEIVER: Received new.  Send ACK and increment seq.')
                     # SEND ACK
                     answer = Packet(self.seq_num, "1")
+                    self.pkts_total += 1
+                    self.bytes_total += len(answer.get_byte_S())
                     self.network.udt_send(answer.get_byte_S())
                     debug_log("RECEIVER: Incrementing seq_num from {} to {}".format(self.seq_num, self.seq_num + 1))
                     debug_log("ACK sent: {}".format(answer.get_byte_S()))
@@ -216,6 +258,9 @@ class RDT:
                         return curr
                 elif p.seq_num > self.seq_num:
                     answer = Packet(p.seq_num, "1")
+                    self.pkts_total += 1
+                    self.bytes_total += len(answer.get_byte_S())
+                    self.msg_total += 1
                     self.network.udt_send(answer.get_byte_S())
                     debug_log("ACK sent: {}".format(answer.get_byte_S()))
                     self.byte_buffer = self.byte_buffer[length:]
@@ -237,6 +282,10 @@ class RDT:
                     # seq_num < self.seq_num
                     debug_log("SENDER BEHIND RECIEVER")
                     answer = Packet(p.seq_num, "1")
+                    self.pkts_total += 1
+                    self.bytes_total += len(answer.get_byte_S())
+                    self.re_pkts_total += 1
+                    self.re_pkts_ack += 1
                     self.network.udt_send(answer.get_byte_S())
                     debug_log("ACK sent: {}".format(answer.get_byte_S()))
                     self.byte_buffer = self.byte_buffer[length:]
@@ -341,6 +390,21 @@ class RDT:
         i += 1
         pkts.append(Packet(self.seq_num + i, message[i * packet_len:(i + 1) * packet_len], True))
         return pkts
+    
+    def stats(self):
+        res = {}
+        res["goodput"] = self.msg_total / (time.time() - self.time)
+        res["vazao"] = self.bytes_total / (time.time() - self.time)
+        res["Total de Pacotes"] = self.pkts_total
+        res["Total de Retransmissões"] = self.re_pkts_total
+        res["Retransmissões de ACK/NACK"] = self.re_pkts_ack
+        res["Retransmissões de mensagens"] = self.re_pkts_msg
+        res["Total de Pacotes Corrompidos"] = self.corr_pkts_total
+        res["Pacotes ACK Corrompidos"] = self.corr_pkts_ack
+        res["Pacotes de mensagem Corrompidos"] = self.corr_pkts_msg
+        res["Pacotes recebidos Corrompidos"] = self.corr_pkts_rec
+        res["Tempo de simulacao"] = time.time() - self.time
+        return res
 
 
 if __name__ == '__main__':

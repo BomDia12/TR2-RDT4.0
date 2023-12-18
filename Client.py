@@ -42,5 +42,8 @@ if __name__ == '__main__':
     except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
         print("Ending connection...")
     finally:
+        print("Stats:")
+        stats = rdt.stats()
+        print(stats)
         rdt.disconnect()
         print("Connection ended.")
