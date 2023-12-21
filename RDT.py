@@ -1,9 +1,10 @@
-import Network
 import argparse
-import time
-from time import sleep
 import hashlib
 import math
+import time
+from time import sleep
+
+import Network
 
 # Constants
 debug = True
@@ -102,11 +103,14 @@ class RDT:
         self.time = time.time()
 
     def rdt_4_0_send(self, msg: str):
+        # Break the message into multiple small pkts and populate the window
         pkts = self._break_message(msg)
         window = [(pkts[i], 0) for i in range(0, window_size)]
         i = window_size
+        # quit once the whole window is sent (aka message is over)
         while len(window) > 0:
             for j in range(0, len(window)):
+                # Send the pkts where the time is 0, aka not sent yet, and add the time they're sent at to them.
                 if window[j][1] == 0:
                     t = time.time()
                     self.network.udt_send(window[j][0].get_byte_S())
@@ -116,8 +120,10 @@ class RDT:
                     self.msg_total += len(window[j][0].msg_S)
                     self.bytes_total += len(window[j][0].get_byte_S())
 
+            # Waits until we have the correct amount of bytes to get the pht lenght
             while len(self.byte_buffer) < (1 + Packet.length_S_length):
                 self.byte_buffer += self.network.udt_receive()
+                # resend all pkts that timout
                 for j in range(0, len(window)):
                     if (window[j][1] + self.timeout) < time.time():
                         t = time.time()
@@ -128,23 +134,29 @@ class RDT:
                         self.re_pkts_msg += 1
                         self.bytes_total += len(window[j][0].get_byte_S())
 
-            #debug_log("SENDER: " + response)
-
             try:
+                # Try to get the message lenght
                 msg_length = int(self.byte_buffer[1:Packet.length_S_length + 1])
-                
+
+                # Await until we have the whole message
+                while len(self.byte_buffer) < msg_length:
+                    self.byte_buffer += self.network.udt_receive();
+
+                # If the ack is corrupt record, remove from buffer and move on, as we don't know anything about the message
                 if Packet.corrupt(self.byte_buffer[:msg_length]):
                     self.byte_buffer = self.byte_buffer[msg_length:]
                     self.corr_pkts_total += 1
                     self.corr_pkts_rec += 1
                     continue
+                # If the pkt is valid deal with it
                 else:
                     res_p = Packet.from_byte_S(self.byte_buffer[:msg_length])
                     self.byte_buffer = self.byte_buffer[msg_length:]
                     seq_nums = [pkt[0].seq_num for pkt in window]
                     try:
+                        # see if the message is in the window
                         ind = seq_nums.index(res_p.seq_num)
-                        # recieved NACK
+                        # recieved NACK, resend the message and update sent time
                         if res_p.msg_S == "0":
                             t = time.time()
                             self.corr_pkts_total += 1
@@ -155,10 +167,11 @@ class RDT:
                             self.bytes_total += len(window[j][0].get_byte_S())
                             self.network.udt_send(window[ind][0].get_byte_S())
                             window[ind] = (window[ind][0], t)
-                        # recieved ACK
+                        # recieved ACK, remove from window
                         elif res_p.msg_S == "1":
                             debug_log("SENDER: Received ACK {}, move on to next.".format(res_p.seq_num))
                             window.pop(ind)
+                            # if it's the first item in the window move the window over and fill it up to window size limit
                             if ind == 0:
                                 while len(window) < window_size:
                                     window.append((pkts[i], 0))
@@ -166,7 +179,7 @@ class RDT:
                             debug_log(f"Window: {[pkt[0].seq_num for pkt in window]}")
                             continue
                     except:
-                        # It's trying to send me data again
+                        # index of pkt is out of the window, if it's a past seq_num, send an ACK, else, ignore it.
                         if self.seq_num > res_p.seq_num:
                             debug_log("SENDER: Receiver behind sender")
                             answer = Packet(res_p.seq_num, "1")
@@ -177,6 +190,7 @@ class RDT:
                             self.network.udt_send(answer.get_byte_S())
                             debug_log("ACK sent: {}".format(answer.get_byte_S()))
             except:
+                # If the ack is corrupt record, remove from buffer and move on, as we don't know anything about the message
                 self.byte_buffer = ''
                 self.corr_pkts_total += 1
                 self.corr_pkts_rec += 1
@@ -195,8 +209,10 @@ class RDT:
                 break  # not enough bytes to read packet length
             # extract length of packet
             try:
+                # try to get the lenght out of the byte buffer
                 length = int(self.byte_buffer[1:Packet.length_S_length + 1])
             except:
+                # Error getting the lenght, there was some corruption in this part of the packet
                 self.byte_buffer = ''
                 debug_log("RECEIVER: Corrupt packet len, sending NAK.")
                 self.pkts_total += 1
@@ -229,6 +245,7 @@ class RDT:
                 p = Packet.from_byte_S(self.byte_buffer[0:length])
                 # Check packet
                 if p.is_ack_pack():
+                    # As this is a receive function, it ignores ACKs/NACKs
                     debug_log('is ACK/NACK pkt')
                     self.byte_buffer = self.byte_buffer[length:]
                     continue
@@ -245,33 +262,40 @@ class RDT:
                     self.seq_num += 1
                     self.return_value += p.msg_S
                     if self.pkt_buf:
+                        # Append values in pkt buffer to the response buffer if they are the next value
                         while self.pkt_buf and (self.pkt_buf[0][0] == self.seq_num):
                             self.return_value += self.pkt_buf[0][1]
                             self.seq_num += 1
                             debug_log("RECEIVER: Incrementing seq_num from {} to {}".format(self.seq_num, self.seq_num + 1))
                             last = self.pkt_buf.pop(0)
+                            # If it is the last packet exit the function and return the message, clearing the state
                             if last[2] == True:
                                 curr = self.return_value
                                 self.return_value = ''
                                 return curr
+                    # If it is the last packet exit the function and return the message, clearing the state
                     if p.last == True:
                         self.pkt_buf = []
                         curr = self.return_value
                         self.return_value = ''
                         return curr
+                # If pkt is out of order add to pkt buffer
                 elif p.seq_num > self.seq_num:
                     answer = Packet(p.seq_num, "1")
                     self.pkts_total += 1
                     self.bytes_total += len(answer.get_byte_S())
                     self.msg_total += 1
                     self.network.udt_send(answer.get_byte_S())
+                    # selective repeat ACKs even out of order pkts
                     debug_log("ACK sent: {}".format(answer.get_byte_S()))
                     self.byte_buffer = self.byte_buffer[length:]
                     seq_nums = [pkt[0] for pkt in self.pkt_buf]
-                    if not p.seq_num in seq_nums:
+                    # Only add the pkt if it isn't already in the buffer
+                    if p.seq_num not in seq_nums:
                         self.pkt_buf.append((p.seq_num, p.msg_S, p.last))
                         self.pkt_buf.sort(key=lambda x: x[0])
                         debug_log(f"PKT out of order, pkt_buf: {self.pkt_buf}")
+                    # While the pkt buffer is in sync with the message add the items in pkt buffer to the response and remove from buffer
                     while self.pkt_buf and (self.pkt_buf[0][0] == self.seq_num):
                             self.return_value += self.pkt_buf[0][1]
                             self.seq_num += 1
@@ -281,8 +305,8 @@ class RDT:
                                 curr = self.return_value
                                 self.return_value = ''
                                 return curr
+                # If seq_num < self.seq_num, sender is behind the reciever, so we resend the ack and move on
                 else:
-                    # seq_num < self.seq_num
                     debug_log("SENDER BEHIND RECIEVER")
                     answer = Packet(p.seq_num, "1")
                     self.pkts_total += 1
