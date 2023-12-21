@@ -120,7 +120,7 @@ class RDT:
                     self.msg_total += len(window[j][0].msg_S)
                     self.bytes_total += len(window[j][0].get_byte_S())
 
-            # Waits until we have the correct amount of bytes to get the pht lenght
+            # Waits until we have the correct amount of bytes to get the pkt lenght
             while len(self.byte_buffer) < (1 + Packet.length_S_length):
                 self.byte_buffer += self.network.udt_receive()
                 # resend all pkts that timout
@@ -138,7 +138,7 @@ class RDT:
                 # Try to get the message lenght
                 msg_length = int(self.byte_buffer[1:Packet.length_S_length + 1])
 
-                # Await until we have the whole message
+                # Wait until we have the whole message
                 while len(self.byte_buffer) < msg_length:
                     self.byte_buffer += self.network.udt_receive();
 
